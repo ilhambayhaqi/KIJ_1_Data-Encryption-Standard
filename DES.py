@@ -108,6 +108,7 @@ def new(key: bytes, mode: int, iv: bytes = None):
 		return ECB_MODE(key)
 	elif mode == MODE_CBC:	
 		assert len(iv) == BLOCK_SIZE, 'IV must be 8 bytes long'
+		iv = iv.encode('utf-8') if type(iv) == str else iv
 		return CBC_MODE(key, iv)
 
 def to_bit(byt):
@@ -156,15 +157,12 @@ def feistel(bit_a, subKeys, encrypt):
 
 	for i in range(16):
 		idx = i if encrypt == True else (15 - i)
-		Temp = Ri
+		temp = Ri
 		F = feistel_round(Ri, subKeys[idx])
 		Ri = [F[j] ^ Li[j] for j in range(len(Li))]
-		Li = Temp
+		Li = temp
 
 	return perm(Ri + Li, IIP)
-
-def getPad(plain: bytes) -> bytes:
-	return pad(plain, 8)
 
 class ECB_MODE():
 	def __init__(self, key):
@@ -175,7 +173,7 @@ class ECB_MODE():
 		if(type(plain) == str):
 			plain = plain.encode('utf-8')
 		if padding == True:
-			plain = getPad(plain)
+			plain = pad(plain, 8)
 		else:
 			assert len(plain) % 8 == 0, 'Plaintext length must be multiple of 8 bytes or use padding=True'
 
@@ -201,5 +199,45 @@ class ECB_MODE():
 class CBC_MODE():
 	def __init__(self, key, iv):
 		self.key = to_bit(key)
-		self.iv = iv
+		self.iv = to_bit(iv)
 		self.subKeys = generateSubKeys(self.key)
+
+	def encrypt(self, plain: bytes, padding=False):
+		if(type(plain) == str):
+			plain = plain.encode('utf-8')
+		if padding == True:
+			plain = pad(plain, 8)
+		else:
+			assert len(plain) % 8 == 0, 'Plaintext length must be multiple of 8 bytes or use padding=True'
+
+		enc = b''
+		for i in range(0,len(plain) // 8):
+			chunk = to_bit(plain[i * BLOCK_SIZE : (i + 1) * BLOCK_SIZE])
+			if i == 0:
+				chunk = [chunk[j] ^ self.iv[j] for j in range(len(chunk))]
+			else:
+				chunk = [chunk[j] ^ enc_chunk[j] for j in range(len(chunk))]
+
+			bit_chunk = perm(chunk, IP)
+			enc_chunk = feistel(bit_chunk, self.subKeys, True)
+			enc += to_bytes(enc_chunk)
+		return enc
+
+	def decrypt(self, enc: bytes, padding=False):
+		assert len(enc) % 8 == 0, 'Ciphertext is invalid'
+		plain = b''
+		for i in range(0,len(enc) // 8):
+			chunk = to_bit(enc[i * BLOCK_SIZE : (i + 1) * BLOCK_SIZE])
+			bit_chunk = perm(chunk, IP)
+			plain_chunk = feistel(bit_chunk, self.subKeys, False)
+
+			if i == 0:
+				plain_chunk = [plain_chunk[j] ^ self.iv[j] for j in range(len(plain_chunk))]
+			else:
+				plain_chunk = [plain_chunk[j] ^ temp[j] for j in range(len(plain_chunk))]
+
+			temp = chunk
+			plain += to_bytes(plain_chunk)
+
+		return unpad(plain,8) if padding else plain
+		

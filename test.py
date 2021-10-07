@@ -1,7 +1,12 @@
+# from Crypto.Cipher import DES
+# from Crypto.Util.Padding import pad, unpad
 import DES
 
-cip = DES.new(b'abcdefgh', DES.MODE_ECB)
-enc = cip.encrypt(b'Helloooo')
-mes = cip.decrypt(enc)
+cip = DES.new(b'abcdefgh', DES.MODE_CBC, b'A' * 8)
+enc = cip.encrypt(b'HellooooAAAA', padding=True)
+print(enc)
 
-print(enc, mes)
+# cip = DES.new(b'abcdefgh', DES.MODE_CBC, b'A' * 8)
+mes = cip.decrypt(enc)
+mes = cip.decrypt(enc, padding = True)
+print(mes)
