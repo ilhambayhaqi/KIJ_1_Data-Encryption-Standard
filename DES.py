@@ -1,11 +1,9 @@
-from Crypto.Util.number import long_to_bytes, bytes_to_long
-from Crypto.Util.Padding import pad, unpad
+from Padding import pad, unpad
 
 BLOCK_SIZE = 8
 
 MODE_ECB = 0
 MODE_CBC = 1
-MODE_CFB = 2
 
 PC_1 = [57, 49, 41, 33, 25, 17,  9,
 		 1, 58, 50, 42, 34, 26, 18,
@@ -112,26 +110,34 @@ def new(key: bytes, mode: int, iv: bytes = None):
 		return CBC_MODE(key, iv)
 
 def to_bit(byt):
-	bitstring = bin(bytes_to_long(byt))[2:].rjust(len(byt) * 8, '0')
+	bitstring = bin(int(byt.hex(), 16))[2:].rjust(len(byt) * 8, '0')
 	return [int(i) for i in bitstring]
 
 def to_bytes(bit_a):
 	bitstring = ''.join([str(i) for i in bit_a])
-	return long_to_bytes(int(bitstring, 2))
+	hexstring = hex(int(bitstring,2))[2:]
+	hexstring = hexstring if len(hexstring) % 2 == 0 else '0' + hexstring
+	return bytes.fromhex(hexstring)
+
+def bytes_xor(byte_a, byte_b):
+	ln = len(byte_a)
+	assert ln == len(byte_b)
+	return bytes(a ^ b for a, b in zip(byte_a, byte_b))
 
 def perm(bit_a, perm_table):
 	return [bit_a[i - 1] for i in perm_table]
 
-def SHIFT_left(bit_a, SHIFT):
+def shift_left(bit_a, SHIFT):
 	return bit_a[SHIFT:] + bit_a[:SHIFT]
 
 def generateSubKeys(key):
+	key = to_bit(key)
 	k_plus = perm(key, PC_1)
 	c, d = [k_plus[:len(k_plus) // 2]], [k_plus[len(k_plus) // 2:]]
 	
 	for i in range(16):
-		c.append(SHIFT_left(c[i], SHIFT[i]))
-		d.append(SHIFT_left(d[i], SHIFT[i]))
+		c.append(shift_left(c[i], SHIFT[i]))
+		d.append(shift_left(d[i], SHIFT[i])) 
 
 	k = [perm(i + j, PC_2) for i, j in zip(c,d)]
 	return k[1:]
@@ -152,7 +158,8 @@ def feistel_round(bit_a, subKey):
 
 	return perm(bit_sub, P)
 
-def feistel(bit_a, subKeys, encrypt):
+def feistel(chunk, subKeys, encrypt):
+	bit_a = perm(to_bit(chunk), IP)
 	Li, Ri = bit_a[:len(bit_a) // 2], bit_a[len(bit_a) // 2 : ]
 
 	for i in range(16):
@@ -162,16 +169,16 @@ def feistel(bit_a, subKeys, encrypt):
 		Ri = [F[j] ^ Li[j] for j in range(len(Li))]
 		Li = temp
 
-	return perm(Ri + Li, IIP)
+	res = perm(Ri + Li, IIP)
+	return to_bytes(res)
 
 class ECB_MODE():
 	def __init__(self, key):
-		self.key = to_bit(key)
+		self.key = key
 		self.subKeys = generateSubKeys(self.key)
 
 	def encrypt(self, plain: bytes, padding=False):
-		if(type(plain) == str):
-			plain = plain.encode('utf-8')
+		plain = plain.encode('utf-8') if type(plain) == str else plain
 		if padding == True:
 			plain = pad(plain, 8)
 		else:
@@ -180,31 +187,28 @@ class ECB_MODE():
 		enc = b''
 		for i in range(0,len(plain) // 8):
 			chunk = plain[i * BLOCK_SIZE : (i + 1) * BLOCK_SIZE]
-			bit_chunk = perm(to_bit(chunk), IP)
-			enc_chunk = feistel(bit_chunk, self.subKeys, True)
-			enc += to_bytes(enc_chunk)
+			enc += feistel(chunk, self.subKeys, True)
+
 		return enc
 
 	def decrypt(self, enc: bytes, padding=False):
 		assert len(enc) % 8 == 0, 'Ciphertext is invalid'
+
 		plain = b''
 		for i in range(0,len(enc) // 8):
 			chunk = enc[i * BLOCK_SIZE : (i + 1) * BLOCK_SIZE]
-			bit_chunk = perm(to_bit(chunk), IP)
-			plain_chunk = feistel(bit_chunk, self.subKeys, False)
-			plain += to_bytes(plain_chunk)
+			plain += feistel(chunk, self.subKeys, False)
 
 		return unpad(plain,8) if padding else plain
 
 class CBC_MODE():
 	def __init__(self, key, iv):
-		self.key = to_bit(key)
-		self.iv = to_bit(iv)
+		self.key = key
+		self.iv = iv
 		self.subKeys = generateSubKeys(self.key)
 
 	def encrypt(self, plain: bytes, padding=False):
-		if(type(plain) == str):
-			plain = plain.encode('utf-8')
+		plain = plain.encode('utf-8') if type(plain) == str else plain
 		if padding == True:
 			plain = pad(plain, 8)
 		else:
@@ -212,32 +216,22 @@ class CBC_MODE():
 
 		enc = b''
 		for i in range(0,len(plain) // 8):
-			chunk = to_bit(plain[i * BLOCK_SIZE : (i + 1) * BLOCK_SIZE])
-			if i == 0:
-				chunk = [chunk[j] ^ self.iv[j] for j in range(len(chunk))]
-			else:
-				chunk = [chunk[j] ^ enc_chunk[j] for j in range(len(chunk))]
+			chunk = plain[i * BLOCK_SIZE : (i + 1) * BLOCK_SIZE]
+			chunk = bytes_xor(chunk, self.iv if i == 0 else prev_enc)
+			prev_enc = feistel(chunk, self.subKeys, True)
+			enc += prev_enc
 
-			bit_chunk = perm(chunk, IP)
-			enc_chunk = feistel(bit_chunk, self.subKeys, True)
-			enc += to_bytes(enc_chunk)
 		return enc
 
 	def decrypt(self, enc: bytes, padding=False):
 		assert len(enc) % 8 == 0, 'Ciphertext is invalid'
+		
 		plain = b''
 		for i in range(0,len(enc) // 8):
-			chunk = to_bit(enc[i * BLOCK_SIZE : (i + 1) * BLOCK_SIZE])
-			bit_chunk = perm(chunk, IP)
-			plain_chunk = feistel(bit_chunk, self.subKeys, False)
-
-			if i == 0:
-				plain_chunk = [plain_chunk[j] ^ self.iv[j] for j in range(len(plain_chunk))]
-			else:
-				plain_chunk = [plain_chunk[j] ^ temp[j] for j in range(len(plain_chunk))]
-
-			temp = chunk
-			plain += to_bytes(plain_chunk)
+			chunk = enc[i * BLOCK_SIZE : (i + 1) * BLOCK_SIZE]
+			plain_chunk = feistel(chunk, self.subKeys, False)
+			plain_chunk = bytes_xor(plain_chunk, self.iv if i == 0 else prev_plain)
+			prev_plain = chunk
+			plain += plain_chunk
 
 		return unpad(plain,8) if padding else plain
-		

@@ -1,12 +1,12 @@
-# from Crypto.Cipher import DES
-# from Crypto.Util.Padding import pad, unpad
 import DES
 
-cip = DES.new(b'abcdefgh', DES.MODE_CBC, b'A' * 8)
-enc = cip.encrypt(b'HellooooAAAA', padding=True)
-print(enc)
+plain = b'Never Gonna Give You Up'
+key = b'rickroll'
+iv = b'A' * 8
 
-# cip = DES.new(b'abcdefgh', DES.MODE_CBC, b'A' * 8)
-mes = cip.decrypt(enc)
-mes = cip.decrypt(enc, padding = True)
-print(mes)
+cipher = DES.new(key, DES.MODE_CBC, iv)
+ciphertext = cipher.encrypt(plain, padding = True)
+print(f'{ciphertext = }')
+
+plaintext = cipher.decrypt(ciphertext, padding = True)
+print(f'{plaintext = }')
